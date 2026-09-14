@@ -20,6 +20,7 @@
  */
 import { MongoClient } from 'mongodb';
 import { env } from '../src/env.js';
+import type { SaleStatusResponse } from '../src/types.js';
 
 const TARGET = process.env.STRESS_TARGET ?? 'http://127.0.0.1:4000';
 const UNIQUE_CONCURRENCY = Number(process.env.STRESS_CONCURRENCY ?? 3000);
@@ -79,7 +80,7 @@ async function main() {
   if (!statusRes.ok) {
     throw new Error(`Server not reachable at ${TARGET} (GET /api/sale/status -> ${statusRes.status})`);
   }
-  const before = await statusRes.json();
+  const before = (await statusRes.json()) as SaleStatusResponse;
   console.log(`Sale before: status=${before.status} remaining=${before.remaining}/${before.totalStock}\n`);
 
   // --- Phase 1: same-user concurrent race (run first, while stock is fresh,
@@ -93,7 +94,7 @@ async function main() {
   console.log('  outcomes:', Object.fromEntries(dupCounts));
 
   // --- Phase 2: unique-user oversell attempt against whatever stock remains -
-  const midStatus = await (await fetch(`${TARGET}/api/sale/status`)).json();
+  const midStatus = (await (await fetch(`${TARGET}/api/sale/status`)).json()) as SaleStatusResponse;
   console.log(`\nPhase 2: ${UNIQUE_CONCURRENCY} concurrent unique users vs ${midStatus.remaining} remaining stock...`);
   const uniqueIds = Array.from({ length: UNIQUE_CONCURRENCY }, (_, i) => `stress-${Date.now()}-${i}`);
   const t0 = performance.now();
@@ -118,7 +119,7 @@ async function main() {
   await client.close();
 
   const afterRes = await fetch(`${TARGET}/api/sale/status`);
-  const after = await afterRes.json();
+  const after = (await afterRes.json()) as SaleStatusResponse;
 
   console.log(`\nSale after:  status=${after.status} remaining=${after.remaining}/${after.totalStock}`);
   console.log(`Mongo order count for "${before.productId}": ${orderCount}\n`);

@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/app.js';
 import { createMongoClient, type MongoContext } from '../../src/clients/mongo.js';
-import { createRedisClient } from '../../src/clients/redis.js';
+import { createRedisClient, STOCK_KEY, USERS_KEY } from '../../src/clients/redis.js';
 import { env } from '../../src/env.js';
 import { reconcileStockFromMongo } from '../../src/services/saleService.js';
 
@@ -36,6 +36,12 @@ async function seedConfig(overrides: { startAt: Date; endAt: Date; totalStock?: 
 async function startApp(): Promise<{ app: FastifyInstance; mongo: MongoContext }> {
   const mongo = await createMongoClient(uri);
   const redis = createRedisClient();
+  // reconcileStockFromMongo only fills in a MISSING counter (it must never
+  // clobber another live instance's counter -- see its doc comment), so
+  // each independent test scenario clears the shared Redis keys first to
+  // get a genuinely fresh reconciliation rather than a no-op against
+  // whatever a previous describe block left behind.
+  await redis.del(STOCK_KEY(env.productId), USERS_KEY(env.productId));
   const app = await buildApp({ mongo, redis, logger: false });
   return { app, mongo };
 }
@@ -59,6 +65,7 @@ describe('active sale', () => {
 
   beforeEach(async () => {
     await mongo.orders.deleteMany({ productId: env.productId });
+    await app.redis.del(STOCK_KEY(env.productId), USERS_KEY(env.productId));
     await reconcileStockFromMongo(mongo, app.redis, app.saleConfig);
   });
 
@@ -201,5 +208,51 @@ describe('ended sale', () => {
     });
     expect(res.statusCode).toBe(410);
     expect(res.json().outcome).toBe('ended');
+  });
+});
+
+describe('boot-time reconciliation safety', () => {
+  const productId = 'reconcile-race-test';
+  const config = {
+    productId,
+    productName: 'Reconcile Test',
+    totalStock: 10,
+    startAt: new Date(Date.now() - 60_000),
+    endAt: new Date(Date.now() + 60_000),
+  };
+
+  it('does not clobber a live counter when reconciled again while it already exists', async () => {
+    const mongo = await createMongoClient(uri);
+    const redis = createRedisClient();
+    await redis.del(STOCK_KEY(productId), USERS_KEY(productId));
+    await mongo.orders.deleteMany({ productId });
+    await mongo.orders.insertMany([
+      { userId: 'a', productId, createdAt: new Date() },
+      { userId: 'b', productId, createdAt: new Date() },
+    ]);
+
+    // First instance boots: Redis has no counter yet, so it rebuilds from
+    // Mongo's order count (2 orders -> 8 remaining).
+    const first = await reconcileStockFromMongo(mongo, redis, config);
+    expect(first).toBe(8);
+
+    // 3 more units sell concurrently through another already-running
+    // instance, decrementing the *live* Redis counter directly -- their
+    // Mongo writes haven't necessarily been observed by anyone else yet.
+    await redis.decrby(STOCK_KEY(productId), 3);
+    expect(await redis.get(STOCK_KEY(productId))).toBe('5');
+
+    // A second instance boots around the same time and reconciles using
+    // the same stale Mongo snapshot (still sees 2 orders). Before the NX
+    // guard, this would have overwritten the live "5" back up to "8" --
+    // un-decrementing 3 units that were legitimately sold and reopening an
+    // oversell window. It must instead leave the live value untouched.
+    const second = await reconcileStockFromMongo(mongo, redis, config);
+    expect(second).toBe(5);
+    expect(await redis.get(STOCK_KEY(productId))).toBe('5');
+
+    await redis.del(STOCK_KEY(productId), USERS_KEY(productId));
+    await redis.quit();
+    await mongo.client.close();
   });
 });

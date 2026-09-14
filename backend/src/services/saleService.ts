@@ -29,31 +29,44 @@ export async function ensureSaleConfig(mongo: MongoContext): Promise<SaleConfig>
 
 /**
  * Rebuilds Redis's stock counter and purchased-user set from Mongo's order
- * records. Mongo is the durable source of truth, so this makes a restarted
- * (or freshly started) Redis instance self-heal to the correct state instead
- * of re-granting stock that was already sold.
+ * records, but ONLY if Redis has no counter for this product yet (a fresh
+ * Redis, or one that lost its AOF). Mongo is the durable source of truth for
+ * that recovery case.
+ *
+ * This must NOT run unconditionally on every process boot: with several API
+ * instances behind a load balancer, a newly-booting instance would otherwise
+ * snapshot Mongo's order count and overwrite Redis's live stock counter with
+ * a stale (higher) number *after* other already-running instances sold more
+ * units concurrently -- silently un-decrementing stock and reopening an
+ * oversell window. Guarding on "SET ... NX" makes the rebuild a no-op
+ * whenever Redis already holds a value, so a routine restart of one instance
+ * can never clobber the others' in-flight state.
  */
 export async function reconcileStockFromMongo(
   mongo: MongoContext,
   redis: RedisClient,
   config: SaleConfig,
 ): Promise<number> {
+  const stockKey = STOCK_KEY(config.productId);
+  const usersKey = USERS_KEY(config.productId);
+
   const purchasedUserIds = await mongo.orders
     .find({ productId: config.productId })
     .map((order) => order.userId)
     .toArray();
-
   const remaining = Math.max(config.totalStock - purchasedUserIds.length, 0);
-  const stockKey = STOCK_KEY(config.productId);
-  const usersKey = USERS_KEY(config.productId);
 
-  const pipeline = redis.pipeline();
-  pipeline.set(stockKey, remaining);
-  pipeline.del(usersKey);
-  if (purchasedUserIds.length > 0) {
-    pipeline.sadd(usersKey, ...purchasedUserIds);
+  const claimed = await redis.set(stockKey, remaining, 'NX');
+  if (claimed !== 'OK') {
+    // Another instance already initialized (or is actively serving) this
+    // product's counters -- trust the live value instead of overwriting it.
+    const current = await redis.get(stockKey);
+    return current === null ? remaining : Math.max(Number(current), 0);
   }
-  await pipeline.exec();
+
+  if (purchasedUserIds.length > 0) {
+    await redis.sadd(usersKey, ...purchasedUserIds);
+  }
 
   return remaining;
 }

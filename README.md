@@ -62,11 +62,18 @@ ordinary I/O around that one hop:
 4. If the Mongo write fails for any reason, the API calls a second Lua script,
    `compensate.lua`, to roll the Redis counters back — so the two stores can never
    drift apart.
-5. On every boot, the API reconciles Redis's stock counter and purchased-user set from
-   MongoDB's actual order count. Mongo is the durable source of truth; Redis is a fast,
-   disposable cache of "how much is left and who's already won" that can always be
-   rebuilt from it. This is what makes a Redis restart (or a fresh container with no
-   AOF file) safe instead of a way to oversell the whole catalog again.
+5. On boot, the API checks whether Redis already has a stock counter for this product
+   (`SET ... NX`). If not — a fresh Redis, or one that lost its AOF file — it rebuilds
+   the counter and the purchased-user set from MongoDB's actual order count before
+   serving any traffic. If the counter is already there, boot leaves it completely
+   alone. Mongo is the durable source of truth; Redis is a fast, disposable cache that
+   can always be rebuilt from it, but **only when it's actually missing** — with
+   several API instances behind a load balancer, unconditionally re-deriving the
+   counter on every restart would let a newly-booting instance overwrite a live counter
+   with a stale, too-high snapshot taken before other instances' concurrent sales,
+   silently un-decrementing stock. A regression test
+   (`tests/integration/api.test.ts` → *boot-time reconciliation safety*) reproduces
+   exactly that scenario and asserts the live counter survives it untouched.
 
 ## Design choices & trade-offs
 
