@@ -1,0 +1,79 @@
+<svg viewBox="0 0 960 630" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Purchase request flow: client calls the Fastify API, which runs a single atomic Redis Lua script to check stock and dedupe the user, then persists a durable order in MongoDB; a failed Mongo write rolls the Redis counters back.">
+  <rect x="0" y="0" width="960" height="630" fill="#ffffff"></rect>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1b1f24"></path>
+    </marker>
+    <marker id="arrowAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d94a24"></path>
+    </marker>
+  </defs>
+
+  <!-- docker compose grouping -->
+  <rect x="300" y="270" width="400" height="270" rx="16" fill="none" stroke="#1b1f24" stroke-width="1.2" stroke-dasharray="3 6" opacity="0.5"></rect>
+  <text x="316" y="292" font-family="monospace" font-size="10.5" letter-spacing="0.06em" fill="#1b1f24" opacity="0.7">DOCKER-COMPOSE &#183; LOCAL INFRA</text>
+
+  <!-- client -->
+  <rect x="370" y="16" width="220" height="56" rx="10" fill="#ffffff" stroke="#1b1f24" stroke-width="1.6"></rect>
+  <text x="480" y="40" text-anchor="middle" font-family="sans-serif" font-weight="600" font-size="14" fill="#1b1f24">React Client</text>
+  <text x="480" y="58" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#1b1f24" opacity="0.65">status view + buy flow</text>
+
+  <!-- read-only callout -->
+  <rect x="700" y="16" width="230" height="92" rx="8" fill="#ffffff" stroke="#1b1f24" stroke-width="1" stroke-dasharray="2 5" opacity="0.8"></rect>
+  <text x="716" y="36" font-family="monospace" font-size="9.5" letter-spacing="0.06em" fill="#1b1f24" opacity="0.65">READ-ONLY ENDPOINTS</text>
+  <text x="716" y="55" font-family="monospace" font-size="11.5" fill="#1b1f24">GET /api/sale/status</text>
+  <text x="716" y="72" font-family="monospace" font-size="11.5" fill="#1b1f24">GET /api/purchase/:userId</text>
+  <text x="716" y="90" font-family="sans-serif" font-size="10.5" fill="#1b1f24" opacity="0.65">served from Redis, no Mongo hop</text>
+  <path d="M700,58 L602,168" stroke="#1b1f24" stroke-width="1" stroke-dasharray="2 4" opacity="0.5"></path>
+
+  <!-- client <-> api -->
+  <line x1="460" y1="72" x2="460" y2="146" stroke="#1b1f24" stroke-width="1.6" marker-end="url(#arrow)"></line>
+  <text x="330" y="98" font-family="monospace" font-size="11" fill="#1b1f24">POST /api/purchase</text>
+  <text x="330" y="114" font-family="monospace" font-size="11" fill="#1b1f24" opacity="0.65">{ userId }</text>
+
+  <line x1="500" y1="146" x2="500" y2="72" stroke="#1b1f24" stroke-width="1.2" stroke-dasharray="2 5" marker-end="url(#arrow)" opacity="0.75"></line>
+  <text x="508" y="98" font-family="monospace" font-size="10.5" fill="#1b1f24" opacity="0.8">201 / 409 / 410 / 425</text>
+  <text x="508" y="113" font-family="sans-serif" font-size="10.5" fill="#1b1f24" opacity="0.6">purchased &#183; duplicate &#183; sold-out &#183; too-early</text>
+
+  <!-- api layer (ghosted stack = N instances) -->
+  <rect x="364" y="132" width="220" height="64" rx="10" fill="#ffffff" stroke="#1b1f24" stroke-width="1" opacity="0.35"></rect>
+  <rect x="372" y="140" width="220" height="64" rx="10" fill="#ffffff" stroke="#1b1f24" stroke-width="1" opacity="0.55"></rect>
+  <rect x="380" y="148" width="220" height="64" rx="10" fill="#ffffff" stroke="#1b1f24" stroke-width="1.6"></rect>
+  <text x="490" y="174" text-anchor="middle" font-family="sans-serif" font-weight="600" font-size="14" fill="#1b1f24">Fastify API</text>
+  <text x="490" y="192" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#1b1f24" opacity="0.65">stateless &#183; N instances behind LB</text>
+
+  <!-- api -> redis -->
+  <line x1="460" y1="212" x2="460" y2="282" stroke="#d94a24" stroke-width="1.8" marker-end="url(#arrowAccent)"></line>
+  <text x="150" y="238" font-family="monospace" font-size="11.5" fill="#d94a24">EVALSHA purchase.lua</text>
+  <text x="150" y="254" font-family="sans-serif" font-size="10.5" fill="#1b1f24" opacity="0.65">&#8594; reserved &#183; duplicate &#183; sold-out</text>
+
+  <!-- redis -->
+  <rect x="340" y="284" width="320" height="120" rx="12" fill="#ffffff" stroke="#d94a24" stroke-width="2.5"></rect>
+  <text x="500" y="308" text-anchor="middle" font-family="sans-serif" font-weight="600" font-size="14.5" fill="#d94a24">Redis &#8212; atomic gate</text>
+  <rect x="356" y="322" width="140" height="56" rx="8" fill="none" stroke="#1b1f24" stroke-width="1"></rect>
+  <text x="426" y="346" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1b1f24">stock counter</text>
+  <text x="426" y="362" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#1b1f24" opacity="0.65">DECR / INCR</text>
+  <rect x="504" y="322" width="140" height="56" rx="8" fill="none" stroke="#1b1f24" stroke-width="1"></rect>
+  <text x="574" y="346" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1b1f24">purchased users</text>
+  <text x="574" y="362" text-anchor="middle" font-family="monospace" font-size="10.5" fill="#1b1f24" opacity="0.65">SADD (dedupe)</text>
+
+  <!-- redis -> mongo -->
+  <line x1="460" y1="404" x2="460" y2="450" stroke="#1b1f24" stroke-width="1.6" marker-end="url(#arrow)"></line>
+  <text x="474" y="432" font-family="monospace" font-size="10.5" fill="#1b1f24" opacity="0.8">reserved &#8594; insert order</text>
+
+  <!-- mongo -->
+  <rect x="400" y="452" width="200" height="64" rx="10" fill="#ffffff" stroke="#1b1f24" stroke-width="1.6"></rect>
+  <text x="500" y="478" text-anchor="middle" font-family="sans-serif" font-weight="600" font-size="14" fill="#1b1f24">MongoDB</text>
+  <text x="500" y="497" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#1b1f24" opacity="0.65">orders &#183; unique idx: userId</text>
+
+  <!-- compensate -->
+  <path d="M602,470 C740,470 740,340 662,340" fill="none" stroke="#1b1f24" stroke-width="1.2" stroke-dasharray="2 5" marker-end="url(#arrow)" opacity="0.75"></path>
+  <text x="672" y="410" font-family="monospace" font-size="10" fill="#1b1f24" opacity="0.8">write fails &#8594;</text>
+  <text x="672" y="424" font-family="monospace" font-size="10" fill="#1b1f24" opacity="0.8">rollback (INCR+SREM)</text>
+
+  <!-- legend -->
+  <line x1="380" y1="562" x2="410" y2="562" stroke="#1b1f24" stroke-width="1.6"></line>
+  <text x="418" y="566" font-family="monospace" font-size="10.5" fill="#1b1f24" opacity="0.75">happy path</text>
+  <line x1="380" y1="580" x2="410" y2="580" stroke="#1b1f24" stroke-width="1.2" stroke-dasharray="2 5"></line>
+  <text x="418" y="584" font-family="monospace" font-size="10.5" fill="#1b1f24" opacity="0.75">rollback / response</text>
+</svg>
